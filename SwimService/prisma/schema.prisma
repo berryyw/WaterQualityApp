@@ -1,0 +1,357 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  active
+  disabled
+}
+
+enum AdminStatus {
+  active
+  disabled
+}
+
+enum AdminRole {
+  admin
+}
+
+enum CityStatus {
+  enabled
+  disabled
+}
+
+enum VenueStatus {
+  normal
+  disabled
+}
+
+enum VenueImageType {
+  cover
+}
+
+enum VenueDataSource {
+  MANUAL
+  AMAP_POI
+  GOOGLE_PLACES
+  GOV_LICENSE
+  OSM_OVERPASS
+}
+
+enum WaterQualityReportSource {
+  MANUAL
+  SWIMMABLE_PUBLIC_DEMO
+  SWIMMABLE_AUTHENTICATED
+}
+
+enum PoolQualityGrade {
+  excellent
+  good
+  attention
+}
+
+enum ReviewStatus {
+  normal
+  disabled
+  deleted
+}
+
+enum FollowStatus {
+  active
+  canceled
+}
+
+enum FollowEventType {
+  follow
+  unfollow
+}
+
+enum EmailCodePurpose {
+  register
+  change_password
+  change_email
+}
+
+model User {
+  id              String        @id @default(uuid()) @db.Uuid
+  email           String        @unique @db.VarChar(128)
+  passwordHash    String        @map("password_hash")
+  status          UserStatus    @default(active)
+  emailVerifiedAt DateTime?     @map("email_verified_at") @db.Timestamptz(6)
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  profile         UserProfile?
+  sessions        UserSession[]
+  reviews         Review[]
+  follows         Follow[]
+  followEvents    FollowEvent[]
+
+  @@map("users")
+}
+
+model UserProfile {
+  userId    String   @id @map("user_id") @db.Uuid
+  nickname  String   @db.VarChar(64)
+  avatarKey String?  @map("avatar_key") @db.VarChar(255)
+  avatarUrl String?  @map("avatar_url")
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
+
+model UserSession {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  tokenId          String    @unique @default(uuid()) @map("token_id") @db.Uuid
+  refreshTokenHash String    @map("refresh_token_hash")
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(6)
+  deviceInfo       Json?     @map("device_info")
+  ip               String?   @db.VarChar(64)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("user_sessions")
+}
+
+model AdminAccount {
+  id          String         @id @default(uuid()) @db.Uuid
+  account     String         @unique @db.VarChar(64)
+  name        String         @db.VarChar(64)
+  passwordHash String        @map("password_hash")
+  role        AdminRole      @default(admin)
+  status      AdminStatus    @default(active)
+  lastLoginAt DateTime?      @map("last_login_at") @db.Timestamptz(6)
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  sessions    AdminSession[]
+  auditLogs   AuditLog[]
+  reports     WaterQualityReport[]
+  reviews     Review[]
+
+  @@map("admin_accounts")
+}
+
+model AdminSession {
+  id               String       @id @default(uuid()) @db.Uuid
+  adminId          String       @map("admin_id") @db.Uuid
+  tokenId          String       @unique @default(uuid()) @map("token_id") @db.Uuid
+  refreshTokenHash String       @map("refresh_token_hash")
+  expiresAt        DateTime     @map("expires_at") @db.Timestamptz(6)
+  ip               String?      @db.VarChar(64)
+  userAgent        String?      @map("user_agent")
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  revokedAt        DateTime?    @map("revoked_at") @db.Timestamptz(6)
+  admin            AdminAccount @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId, createdAt(sort: Desc)])
+  @@map("admin_sessions")
+}
+
+model City {
+  id        String      @id @default(uuid()) @db.Uuid
+  code      String      @unique @db.VarChar(32)
+  name      String      @db.VarChar(32)
+  status    CityStatus  @default(enabled)
+  sortOrder Int         @default(0) @map("sort_order")
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  venues    Venue[]
+
+  @@map("cities")
+}
+
+model Venue {
+  id              String              @id @default(uuid()) @db.Uuid
+  cityId          String              @map("city_id") @db.Uuid
+  name            String              @db.VarChar(128)
+  district        String              @db.VarChar(64)
+  address         String              @db.VarChar(255)
+  latitude        Decimal             @db.Decimal(10, 7)
+  longitude       Decimal             @db.Decimal(10, 7)
+  snappedLatitude Decimal?            @map("snapped_latitude") @db.Decimal(10, 4)
+  snappedLongitude Decimal?           @map("snapped_longitude") @db.Decimal(10, 4)
+  summary         String?
+  imageCaption    String?             @map("image_caption") @db.VarChar(128)
+  status          VenueStatus         @default(normal)
+  followersCount  Int                 @default(0) @map("followers_count")
+  rankingMomentum Int                 @default(0) @map("ranking_momentum")
+  openedAt        DateTime?           @map("opened_at") @db.Timestamptz(6)
+  dataSource      VenueDataSource     @default(MANUAL) @map("data_source")
+  lastIngestedAt  DateTime?           @map("last_ingested_at") @db.Timestamptz(6)
+  createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  city            City                @relation(fields: [cityId], references: [id], onDelete: Restrict)
+  images          VenueImage[]
+  waterQuality    WaterQualityReport[]
+  reviews         Review[]
+  follows         Follow[]
+  followEvents    FollowEvent[]
+  externalIds     VenueExternalId[]
+
+  @@index([cityId, status])
+  @@index([cityId, dataSource])
+  @@index([snappedLatitude, snappedLongitude])
+  @@map("venues")
+}
+
+model VenueExternalId {
+  id         String          @id @default(uuid()) @db.Uuid
+  venueId    String          @map("venue_id") @db.Uuid
+  venue      Venue           @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  source     VenueDataSource
+  externalId String          @map("external_id") @db.VarChar(255)
+  rawName    String?         @map("raw_name") @db.VarChar(128)
+  rawAddress String?         @map("raw_address") @db.VarChar(255)
+  createdAt  DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([source, externalId])
+  @@index([venueId])
+  @@map("venue_external_ids")
+}
+
+model VenueImage {
+  id        String         @id @default(uuid()) @db.Uuid
+  venueId   String         @map("venue_id") @db.Uuid
+  fileKey   String         @map("file_key") @db.VarChar(255)
+  fileUrl   String         @map("file_url")
+  type      VenueImageType @default(cover)
+  sortOrder Int            @default(0) @map("sort_order")
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  venue     Venue          @relation(fields: [venueId], references: [id], onDelete: Cascade)
+
+  @@index([venueId, type])
+  @@map("venue_images")
+}
+
+model WaterQualityReport {
+  id                String                     @id @default(uuid()) @db.Uuid
+  venueId           String                     @map("venue_id") @db.Uuid
+  grade             PoolQualityGrade
+  note              String
+  updatedAt         DateTime                   @map("updated_at") @db.Timestamptz(6)
+  turbidity         Decimal                    @db.Decimal(6, 2)
+  waterTemperature  Decimal                    @map("water_temperature") @db.Decimal(6, 2)
+  phValue           Decimal                    @map("ph_value") @db.Decimal(4, 2)
+  freeChlorine      Decimal                    @map("free_chlorine") @db.Decimal(6, 2)
+  combinedChlorine  Decimal                    @map("combined_chlorine") @db.Decimal(6, 2)
+  orp               Int
+  bacterialCount    String                     @map("bacterial_count") @db.VarChar(64)
+  totalColiforms    String                     @map("total_coliforms") @db.VarChar(64)
+  urea              Decimal                    @db.Decimal(6, 2)
+  cyanuricAcid      Decimal                    @map("cyanuric_acid") @db.Decimal(6, 2)
+  tds               Int
+  isCurrent         Boolean                    @default(true) @map("is_current")
+  source            WaterQualityReportSource   @default(MANUAL)
+  expiresAt         DateTime?                  @map("expires_at") @db.Timestamptz(6)
+  rawResponse       Json?                      @map("raw_response")
+  createdByAdminId  String?                    @map("created_by_admin_id") @db.Uuid
+  createdAt         DateTime                   @default(now()) @map("created_at") @db.Timestamptz(6)
+  venue             Venue                      @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  createdByAdmin    AdminAccount?              @relation(fields: [createdByAdminId], references: [id], onDelete: Restrict)
+
+  @@index([venueId, updatedAt(sort: Desc)])
+  @@index([venueId, isCurrent])
+  @@index([venueId, source])
+  @@map("water_quality_reports")
+}
+
+model Review {
+  id                 String         @id @default(uuid()) @db.Uuid
+  venueId            String         @map("venue_id") @db.Uuid
+  userId             String         @map("user_id") @db.Uuid
+  content            String         @db.VarChar(200)
+  status             ReviewStatus   @default(normal)
+  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  moderatedByAdminId String?        @map("moderated_by_admin_id") @db.Uuid
+  moderatedAt        DateTime?      @map("moderated_at") @db.Timestamptz(6)
+  venue              Venue          @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  user               User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  moderatedByAdmin   AdminAccount?  @relation(fields: [moderatedByAdminId], references: [id], onDelete: SetNull)
+  statusLogs         ReviewStatusLog[]
+
+  @@index([venueId, status, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("reviews")
+}
+
+model ReviewStatusLog {
+  id         String       @id @default(uuid()) @db.Uuid
+  reviewId   String       @map("review_id") @db.Uuid
+  fromStatus ReviewStatus @map("from_status")
+  toStatus   ReviewStatus @map("to_status")
+  reason     String?
+  adminId    String       @map("admin_id") @db.Uuid
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  review     Review       @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@index([reviewId, createdAt(sort: Desc)])
+  @@map("review_status_logs")
+}
+
+model Follow {
+  id         String       @id @default(uuid()) @db.Uuid
+  venueId    String       @map("venue_id") @db.Uuid
+  userId     String       @map("user_id") @db.Uuid
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  canceledAt DateTime?    @map("canceled_at") @db.Timestamptz(6)
+  status     FollowStatus @default(active)
+  venue      Venue        @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([venueId, userId])
+  @@index([userId, status])
+  @@map("follows")
+}
+
+model FollowEvent {
+  id        String          @id @default(uuid()) @db.Uuid
+  venueId   String          @map("venue_id") @db.Uuid
+  userId    String          @map("user_id") @db.Uuid
+  eventType FollowEventType @map("event_type")
+  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  venue     Venue           @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([venueId, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("follow_events")
+}
+
+model EmailVerificationCode {
+  id         String           @id @default(uuid()) @db.Uuid
+  email      String           @db.VarChar(128)
+  purpose    EmailCodePurpose
+  codeHash   String           @map("code_hash")
+  expiresAt  DateTime         @map("expires_at") @db.Timestamptz(6)
+  usedAt     DateTime?        @map("used_at") @db.Timestamptz(6)
+  sendCount  Int              @default(1) @map("send_count")
+  createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([email, purpose, createdAt(sort: Desc)])
+  @@map("email_verification_codes")
+}
+
+model AuditLog {
+  id         String       @id @default(uuid()) @db.Uuid
+  adminId    String       @map("admin_id") @db.Uuid
+  action     String       @db.VarChar(64)
+  targetType String       @map("target_type") @db.VarChar(64)
+  targetId   String?      @map("target_id") @db.Uuid
+  payload    Json?
+  ip         String?      @db.VarChar(64)
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  admin      AdminAccount @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}

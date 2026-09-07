@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: swimservice-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-swim_service}
+      POSTGRES_USER: ${POSTGRES_USER:-swim}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-swim_password_change_me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER:-swim} -d ${POSTGRES_DB:-swim_service}
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  swimservice:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: swimservice-cloud
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.cloud
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./uploads:/app/uploads
+      - ./runtime:/app/runtime
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
