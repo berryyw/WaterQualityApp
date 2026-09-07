@@ -6,11 +6,6 @@
 - `SwimService`：后端服务，基于 `NestJS + Prisma + PostgreSQL`
 - `SwimAdminWeb`：运营后台，基于 `React + Vite`
 
-当前项目已经完成从“本地真实联调”到“阿里云正式环境基础可用”的收口，现有正式基线 Tag 为：
-
-```bash
-cloud-baseline-2026-07-14
-```
 
 ## 1. 仓库结构
 
