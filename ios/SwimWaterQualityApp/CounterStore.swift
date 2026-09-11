@@ -14,7 +14,11 @@ final class SwimAppStore: NSObject, ObservableObject {
     @Published var currentCity: SupportedCity {
         didSet {
             UserDefaults.standard.set(currentCity.rawValue, forKey: currentCityKey)
+            isProgrammaticCameraChange = true
             cameraPosition = .region(CityRegionCatalog.regions[currentCity] ?? defaultRegion)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                self?.isProgrammaticCameraChange = false
+            }
 
             if venueCollections[currentCity] == nil {
                 Task {
@@ -34,40 +38,46 @@ final class SwimAppStore: NSObject, ObservableObject {
     private let currentCityKey = "swim_quality.current_city"
     private let mapModeKey = "swim_quality.map_mode"
     private var shouldCenterOnUserAfterAuthorization = false
-    private var venueCollections: [SupportedCity: [SwimVenue]] = [:]
-    private var reviewsByVenueID: [String: [VenueReview]] = [:]
+    @Published private(set) var venueCollections: [SupportedCity: [SwimVenue]] = [:]
+    @Published private(set) var reviewsByVenueID: [String: [VenueReview]] = [:]
     private var firstLoginVerificationToken: String?
     private var changeEmailVerificationToken: String?
     private var changePasswordVerificationToken: String?
     @Published private(set) var autoSwitchCityBasedOnUserLocation: Bool = false
     private var hasResolvedDefaultCity = false
     private var hasManualCitySelection = false
+    private var isProgrammaticCameraChange = false
+    private var pendingCitySwitchTask: Task<Void, Never>?
 
     private var defaultRegion: MKCoordinateRegion {
-        CityRegionCatalog.regions[.losAngeles] ?? MKCoordinateRegion()
+        CityRegionCatalog.regions[.irvine] ?? MKCoordinateRegion()
     }
 
     init(appService: AppServicing = RemoteAppService()) {
-        let savedCityCode = UserDefaults.standard.string(forKey: currentCityKey) ?? ""
-        // 本地 LA 兜底 region（inline，避免 super.init 前用 self.defaultRegion）
-        let laFallbackRegion = CityRegionCatalog.regions[.losAngeles]
+        // FORCE MIGRATION: 默认城市从洛杉矶切到尔湾（2026-09 尔湾上线）
+        // 清除旧的 savedCityCode，保证所有用户首屏都切到尔湾；手动选过的城市只当次有效，下次启动恢复尔湾默认。
+        UserDefaults.standard.removeObject(forKey: currentCityKey)
+        let savedCityCode = ""
+
+        // 本地 Irvine 兜底 region（inline，避免 super.init 前用 self.defaultRegion）
+        let irvineFallbackRegion = CityRegionCatalog.regions[.irvine]
             ?? MKCoordinateRegion(
-                center: CLLocationCoordinate2D(latitude: 34.0522, longitude: -118.2437),
+                center: CLLocationCoordinate2D(latitude: 33.6846, longitude: -117.8265),
                 span: MKCoordinateSpan(latitudeDelta: 0.85, longitudeDelta: 0.85)
             )
-        // 关键：即使 UserDefaults 为空，默认先用 LA 启动，不让 Beijing 污染 first paint
+        // 关键：即使 UserDefaults 为空，默认先用 Irvine 启动，不让其他城市污染 first paint
         let savedCity: SupportedCity
         if savedCityCode.isEmpty {
-            savedCity = .losAngeles
+            savedCity = .irvine
             hasManualCitySelection = true
             hasResolvedDefaultCity = true
         } else {
-            // SupportedCity(rawValue:) 返回非 optional；所以用 allCases 过滤，不在列表 → 退回 LA
+            // SupportedCity(rawValue:) 返回非 optional；所以用 allCases 过滤，不在列表 → 退回 Irvine
             let temp = SupportedCity(rawValue: savedCityCode)
             if SupportedCity.allCases.contains(where: { $0.rawValue == temp.rawValue }) {
                 savedCity = temp
             } else {
-                savedCity = .losAngeles
+                savedCity = .irvine
             }
             hasManualCitySelection = true
             hasResolvedDefaultCity = true
@@ -77,16 +87,24 @@ final class SwimAppStore: NSObject, ObservableObject {
         self.mapDisplayMode = MapDisplayMode(
             rawValue: UserDefaults.standard.string(forKey: mapModeKey) ?? ""
         ) ?? .standard
-        self.cameraPosition = .region(CityRegionCatalog.regions[savedCity] ?? laFallbackRegion)
+        self.cameraPosition = .region(CityRegionCatalog.regions[savedCity] ?? irvineFallbackRegion)
         self.locationAuthorizationStatus = locationManager.authorizationStatus
         self.allCities = Array(NSOrderedSet(array: SupportedCity.allCases)) as! [SupportedCity]
         super.init()
 
+        // ★ Startup speedup 1/3: 先给默认城市注入空数组，避免 onAppear 的 isEmpty 兜底双触发
+        //   (venueCollections 是 @Published，set 后 Map 会收到通知但渲染空数组没问题)
+        if self.venueCollections[savedCity] == nil {
+            self.venueCollections[savedCity] = []
+        }
+
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
 
+        // ★ Startup speedup 2/3: restoreSession 只负责 user session，200ms 内把 isRestoringSession 置 false
+        //   venues 在后台异步拉，拉回来立刻 @Published 触发 Map 补 Markers
         Task {
-            await restoreSession()
+            await restoreSessionThenAllowRender()
         }
     }
 
@@ -170,36 +188,94 @@ final class SwimAppStore: NSObject, ObservableObject {
     }
 
     func restoreSession() async {
-        // 首屏加速：如果本地根本没有 session 存根（AppServicing 把 session 存在 UserDefaults["swim_quality.remote.session"]）
-        // → 不发 /app/me 网络请求，直接 currentUser=nil，只 prefetch currentCity(默认 LA) venues
-        let kRemoteSession = "swim_quality.remote.session"
-        let hasStoredSession = UserDefaults.standard.data(forKey: kRemoteSession) != nil
-        do {
-            if hasStoredSession {
-                let maybeUser = try await appService.restoreAuthenticatedUser()
-                currentUser = maybeUser
-                if maybeUser != nil {
-                    try await refreshRemoteBootstrapForSessionRestore()
-                } else {
-                    // 有 session 但是过期/失效，至少把 currentCity 的 venues 拉一次
-                    if venueCollections[currentCity] == nil {
-                        try? await loadVenues(for: currentCity)
-                    }
-                }
-            } else {
-                currentUser = nil
-                // 未登录：首屏不 prefetch 全部 allCities venues，只拉 currentCity（默认 LA）加速
-                if venueCollections[currentCity] == nil {
-                    try? await loadVenues(for: currentCity)
-                }
+        // 兼容保留：restoreSession 现在只是 restoreSessionThenAllowRender 的别名
+        await restoreSessionThenAllowRender()
+    }
+
+    /// ★ Startup speedup 3/3:
+    /// - 1.2s 超时强制放行 isRestoringSession，绝不把启动屏卡死 20s
+    /// - user session restore + venues fetch 并行；venues 回来靠 @Published 触发 Map 补 Markers
+    /// - 不再等 venues 加载完才放用户进首页
+    @MainActor
+    func restoreSessionThenAllowRender() async {
+        // 1) 开一个 1.2s 的硬超时：不管什么慢任务，到点就放行
+        let renderDeadlineTask = Task { @MainActor () -> Bool in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            return true
+        }
+        defer { renderDeadlineTask.cancel() }
+
+        // 2) 并行执行 user session 恢复（如果有）+ 当前城市 venues 预取
+        //    user session 结果只影响 currentUser，不影响进入首页渲染
+        let sessionRestoreTask = Task { @MainActor () -> AppUser? in
+            let kRemoteSession = "swim_quality.remote.session"
+            let hasStoredSession = UserDefaults.standard.data(forKey: kRemoteSession) != nil
+            guard hasStoredSession else {
+                return nil
             }
-        } catch {
-            currentUser = nil
-            reviewsByVenueID = [:]
-            // 出错：保留 venueCollections LA 缓存，不清空（首屏要显示 Marker）
+            do {
+                return try await appService.restoreAuthenticatedUser()
+            } catch {
+                return nil
+            }
         }
 
+        // 当前城市 venues 立刻后台异步开始拉（拉回来立刻 @Published venueCollections，Map 自动补 Marker）
+        let cityForPrefetch = currentCity
+        Task.detached { [weak self] in
+            do {
+                let venues = try await self?.appService.listVenues(city: cityForPrefetch) ?? []
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    // 如果 onAppear 兜底已经先拉过了非空，不覆盖
+                    if (self.venueCollections[cityForPrefetch] ?? []).isEmpty {
+                        self.venueCollections[cityForPrefetch] = venues
+                    }
+                }
+            } catch {
+                // ignore; onAppear 兜底会再拉一次
+            }
+        }
+
+        // 3) 等任一个：user session result OR 1.2s deadline（谁先到用谁）
+        var user: AppUser? = nil
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { @MainActor in
+                user = await sessionRestoreTask.value
+            }
+            group.addTask { @MainActor in
+                _ = await renderDeadlineTask.value
+            }
+            // 等前两个中的任意一个结束，就立刻 break，不再等后面
+            for await _ in group {
+                // 立刻停止等待，准备 set isRestoringSession=false
+                break
+            }
+        }
+
+        // 4) 再等最多 300ms 让 sessionRestoreTask 有机会收尾（如果它其实已经快完成了）
+        //    超过就不等了，session 后台继续，先让用户看到地图
+        do {
+            try await Task.sleep(nanoseconds: 300_000_000)
+        } catch {}
+        if user == nil {
+            user = await sessionRestoreTask.value
+        }
+
+        // 5) 最后写 currentUser，然后立刻放行
+        currentUser = user
         isRestoringSession = false
+
+        // 6) 如果 user 存在（已登录），后台再跑一次完整的 bootstrap（allCities / allVenues），用户看不见不卡 UI
+        if let _ = currentUser {
+            Task.detached { [weak self] in
+                do {
+                    try await self?.refreshRemoteBootstrapForSessionRestore()
+                } catch {
+                    // ignore
+                }
+            }
+        }
     }
 
     func filteredVenues(searchText: String = "") -> [SwimVenue] {
@@ -248,12 +324,16 @@ final class SwimAppStore: NSObject, ObservableObject {
     }
 
     func centerOnVenue(_ venue: SwimVenue) {
+        isProgrammaticCameraChange = true
         cameraPosition = .region(
             MKCoordinateRegion(
                 center: venue.coordinate,
                 span: MKCoordinateSpan(latitudeDelta: 0.03, longitudeDelta: 0.03)
             )
         )
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            self?.isProgrammaticCameraChange = false
+        }
     }
 
     func switchCity(to city: SupportedCity) {
@@ -333,12 +413,47 @@ final class SwimAppStore: NSObject, ObservableObject {
             let lhsDistance = location.distance(from: CLLocation(latitude: lhsCenter.latitude, longitude: lhsCenter.longitude))
             let rhsDistance = location.distance(from: CLLocation(latitude: rhsCenter.latitude, longitude: rhsCenter.longitude))
             return lhsDistance < rhsDistance
-        } ?? .losAngeles
+        } ?? .irvine
+    }
+
+    /// 判断坐标是否在目标城市的 region 范围内（粗略，用 region span 2/3 阈值）
+    private func isCoordinate(_ coordinate: CLLocationCoordinate2D, within city: SupportedCity) -> Bool {
+        guard let region = CityRegionCatalog.regions[city] else { return false }
+        let latHalf = region.span.latitudeDelta * 0.55
+        let lonHalf = region.span.longitudeDelta * 0.55
+        return abs(coordinate.latitude - region.center.latitude) <= latHalf
+            && abs(coordinate.longitude - region.center.longitude) <= lonHalf
+    }
+
+    /// 用户拖动地图到目标城市 region 范围内时自动切城市（用于跨城市 Marker 预览）
+    /// - 只处理「用户手势拖动」产生的 camera 变化（忽略代码设置的 camera 变化）
+    /// - 当 map center 离开当前城市区域并进入另一个城市区域时触发切换
+    func handleUserPanToCoordinate(_ center: CLLocationCoordinate2D) {
+        guard !isProgrammaticCameraChange else { return }
+        let currentlyWithin = isCoordinate(center, within: currentCity)
+        if currentlyWithin {
+            pendingCitySwitchTask?.cancel()
+            pendingCitySwitchTask = nil
+            return
+        }
+        let candidate = nearestKnownCity(to: center)
+        guard candidate != currentCity else { return }
+        let insideCandidate = isCoordinate(center, within: candidate)
+        guard insideCandidate else { return }
+        pendingCitySwitchTask?.cancel()
+        pendingCitySwitchTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            Task { @MainActor [weak self] in
+                guard let self, !self.isProgrammaticCameraChange else { return }
+                self.switchCity(to: candidate)
+            }
+        }
     }
 
     private func preferredFallbackCity() -> SupportedCity {
-        // 硬编码返回洛杉矶：不依赖 allCities 排序 / 后端返回
-        return .losAngeles
+        // 硬编码返回尔湾：不依赖 allCities 排序 / 后端返回
+        return .irvine
     }
 
     func sendFirstLoginCode(to email: String) async throws {
@@ -563,7 +678,7 @@ final class SwimAppStore: NSObject, ObservableObject {
         }
     }
 
-    private func loadVenues(for city: SupportedCity) async throws {
+    func loadVenues(for city: SupportedCity) async throws {
         let venues = try await appService.listVenues(city: city)
         venueCollections[city] = venues
     }
@@ -611,12 +726,16 @@ extension SwimAppStore: CLLocationManagerDelegate {
             self.syncMapCurrentCityToUserLocation()
 
             if self.shouldCenterOnUserAfterAuthorization {
+                self.isProgrammaticCameraChange = true
                 self.cameraPosition = .region(
                     MKCoordinateRegion(
                         center: latestLocation.coordinate,
                         span: MKCoordinateSpan(latitudeDelta: 0.04, longitudeDelta: 0.04)
                     )
                 )
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                    self?.isProgrammaticCameraChange = false
+                }
                 self.shouldCenterOnUserAfterAuthorization = false
             }
         }
@@ -724,14 +843,28 @@ private enum RemoteServiceError: LocalizedError {
 }
 
 private final class RemoteAppService: AppServicing {
-    private let session = URLSession.shared
+    private static let configuredSession: URLSession = {
+        let cfg = URLSessionConfiguration.default
+        // ★ 核心加速：避免 60s 长挂，请求 8s 超时 资源 20s 超时，失败后 onAppear 兜底再拉一次
+        cfg.timeoutIntervalForRequest = 8
+        cfg.timeoutIntervalForResource = 20
+        cfg.requestCachePolicy = .reloadRevalidatingCacheData
+        cfg.urlCache = nil
+        cfg.httpMaximumConnectionsPerHost = 6
+        if #available(iOS 15.0, *) {
+            cfg.multipathServiceType = .none
+        }
+        return URLSession(configuration: cfg)
+    }()
+    private let session: URLSession
     private let storage = UserDefaults.standard
     private let sessionKey = "swim_quality.remote.session"
     private let baseURL: URL
     private let jsonDecoder: JSONDecoder
     private let jsonEncoder: JSONEncoder
 
-    init(baseURL: URL = AppServiceConfiguration.resolveBaseURL()) {
+    init(baseURL: URL = AppServiceConfiguration.resolveBaseURL(), session: URLSession? = nil) {
+        self.session = session ?? Self.configuredSession
         self.baseURL = baseURL
 
         let decoder = JSONDecoder()
@@ -914,7 +1047,13 @@ private final class RemoteAppService: AppServicing {
             token: nil,
             body: Optional<EmptyPayload>.none
         )
-        return response.compactMap { city in
+        let sorted = response.enumerated().sorted { lhs, rhs in
+            let lo = lhs.element.sortOrder ?? lhs.offset
+            let ro = rhs.element.sortOrder ?? rhs.offset
+            if lo != ro { return lo < ro }
+            return lhs.offset < rhs.offset
+        }.map { $0.element }
+        return sorted.compactMap { city in
             guard city.status == "enabled" else { return nil }
             return SupportedCity(
                 rawValue: city.code,
@@ -1142,6 +1281,38 @@ private final class RemoteAppService: AppServicing {
         )
     }
 
+    private static func sanitizeVenueSummary(_ raw: String) -> String {
+        let excludedTags: Set<String> = [
+            "point_of_interest",
+            "establishment",
+            "premise"
+        ]
+        let unwantedJoined = excludedTags.joined(separator: "|")
+        let pattern =
+            " · (?:\(unwantedJoined))"
+            + "|, (?:\(unwantedJoined))(?:, ·| ·|$)"
+            + "|(?:\(unwantedJoined))(?:, )?"
+            + "|\\s+\\.\\s*$|\\s+·\\s*$"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return raw
+        }
+        var result = raw
+        for _ in 0..<3 {
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "")
+        }
+        result = result
+            .replacingOccurrences(of: ", ·", with: " ·")
+            .replacingOccurrences(of: "· ,", with: "·")
+            .replacingOccurrences(of: "  ", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if result.hasSuffix(" ·") {
+            result.removeLast(2)
+        }
+        if result.isEmpty { return "查看本地真实水质与场馆动态" }
+        return result
+    }
+
     private static func makeVenue(from response: BackendVenueResponse) -> SwimVenue? {
         let city = SupportedCity(
             rawValue: response.city.code,
@@ -1167,6 +1338,9 @@ private final class RemoteAppService: AppServicing {
                 tds: 0
             )
 
+        let rawSummary = response.summary ?? "查看本地真实水质与场馆动态"
+        let cleanedSummary = sanitizeVenueSummary(rawSummary)
+
         return SwimVenue(
             id: response.id,
             city: city,
@@ -1176,7 +1350,7 @@ private final class RemoteAppService: AppServicing {
             latitude: response.latitude,
             longitude: response.longitude,
             coverStyle: artworkStyle(for: response.id),
-            summary: response.summary ?? "查看本地真实水质与场馆动态",
+            summary: cleanedSummary,
             imageCaption: response.imageCaption ?? response.name,
             followersCount: response.followersCount,
             openedAt: response.openedAt ?? response.createdAt,
@@ -1206,14 +1380,35 @@ private final class RemoteAppService: AppServicing {
     }
 
     private static func makeReview(from response: BackendReviewResponse) -> VenueReview {
-        let displayName = response.user.profile?.nickname ?? response.user.email
+        let resolvedDisplayName: String = {
+            if let raw = response.user.displayName, !raw.isEmpty { return raw }
+            if let nick = response.user.profile?.nickname, !nick.isEmpty { return nick }
+            if let email = response.user.email, !email.isEmpty { return email }
+            switch response.source?.uppercased() {
+            case "GOOGLE": return "Google 地图用户"
+            default: return "匿名用户"
+            }
+        }()
+        let resolvedAvatarURL: String? = {
+            if let raw = response.user.avatarUrl, !raw.isEmpty { return raw }
+            if let fromProfile = response.user.profile?.avatarUrl, !fromProfile.isEmpty { return fromProfile }
+            return nil
+        }()
+        let resolvedSource: VenueReviewSource = {
+            guard let raw = response.source, !raw.isEmpty else { return .app }
+            return VenueReviewSource(rawValue: raw.uppercased()) ?? .app
+        }()
         return VenueReview(
             id: response.id,
-            userName: displayName,
-            userAvatarSymbol: avatarSymbol(for: displayName),
-            userAvatarHex: avatarHex(for: displayName),
+            userName: resolvedDisplayName,
+            userAvatarSymbol: avatarSymbol(for: resolvedDisplayName),
+            userAvatarHex: avatarHex(for: resolvedDisplayName),
+            userAvatarURL: resolvedAvatarURL,
             content: response.content,
-            createdAt: response.createdAt
+            createdAt: response.createdAt,
+            rating: response.rating,
+            relativeTime: response.relativeTime,
+            source: resolvedSource
         )
     }
 
@@ -1467,6 +1662,20 @@ private struct BackendCityResponse: Decodable {
     var code: String
     var name: String
     var status: String
+    var sortOrder: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, code, name, status, sortOrder = "sort_order"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        code = try container.decode(String.self, forKey: .code)
+        name = try container.decode(String.self, forKey: .name)
+        status = try container.decode(String.self, forKey: .status)
+        sortOrder = try container.decodeIfPresent(Int.self, forKey: .sortOrder)
+    }
 }
 
 private struct BackendVenueCityResponse: Decodable {
@@ -1586,18 +1795,45 @@ private struct BackendVenueResponse: Decodable {
 
 private struct BackendReviewUserProfileResponse: Decodable {
     var nickname: String?
+    var avatarUrl: String?
 }
 
 private struct BackendReviewUserResponse: Decodable {
-    var email: String
+    var email: String?
     var profile: BackendReviewUserProfileResponse?
+    var displayName: String?
+    var avatarUrl: String?
 }
 
 private struct BackendReviewResponse: Decodable {
     var id: String
+    var source: String?
     var content: String
     var createdAt: Date
+    var rating: Int?
+    var relativeTime: String?
     var user: BackendReviewUserResponse
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case source
+        case content
+        case createdAt
+        case rating
+        case relativeTime
+        case user
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        source = try container.decodeIfPresent(String.self, forKey: .source)
+        content = try container.decode(String.self, forKey: .content)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        rating = try container.decodeIfPresent(Int.self, forKey: .rating)
+        relativeTime = try container.decodeIfPresent(String.self, forKey: .relativeTime)
+        user = try container.decode(BackendReviewUserResponse.self, forKey: .user)
+    }
 }
 
 private extension KeyedDecodingContainer {

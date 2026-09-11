@@ -34,16 +34,23 @@ type SeedVenueInput = {
 
 const CITY_SEEDS = [
   {
+    code: 'irvine',
+    name: '尔湾',
+    sortOrder: 0,
+    center: { latitude: 33.6846, longitude: -117.8265 },
+    venues: [],
+  },
+  {
     code: 'la',
     name: '洛杉矶',
-    sortOrder: 0,
+    sortOrder: 1,
     center: { latitude: 34.0522, longitude: -118.2437 },
     venues: [],
   },
   {
     code: 'beijing',
     name: '北京',
-    sortOrder: 1,
+    sortOrder: 2,
     center: { latitude: 39.9042, longitude: 116.4074 },
     venues: [
       { name: '朝阳云汐游泳馆', district: '朝阳区', address: '北京市朝阳区望京湖畔路 18 号', grade: 'excellent' as const },
@@ -61,7 +68,7 @@ const CITY_SEEDS = [
   {
     code: 'shanghai',
     name: '上海',
-    sortOrder: 2,
+    sortOrder: 3,
     center: { latitude: 31.2304, longitude: 121.4737 },
     venues: [
       { name: '徐汇镜海泳馆', district: '徐汇区', address: '上海市徐汇区龙华中路 788 号', grade: 'excellent' as const },
@@ -79,7 +86,7 @@ const CITY_SEEDS = [
   {
     code: 'shenzhen',
     name: '深圳',
-    sortOrder: 3,
+    sortOrder: 4,
     center: { latitude: 22.5431, longitude: 114.0579 },
     venues: [
       { name: '南山涟漪泳池中心', district: '南山区', address: '深圳市南山区科苑南路 2666 号', grade: 'good' as const },

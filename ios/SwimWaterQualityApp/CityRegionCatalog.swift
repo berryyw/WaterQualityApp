@@ -6,6 +6,10 @@ enum CityRegionCatalog {
             center: CLLocationCoordinate2D(latitude: 34.0522, longitude: -118.2437),
             span: MKCoordinateSpan(latitudeDelta: 0.22, longitudeDelta: 0.22)
         ),
+        .irvine: MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: 33.6846, longitude: -117.8265),
+            span: MKCoordinateSpan(latitudeDelta: 0.12, longitudeDelta: 0.12)
+        ),
         .beijing: MKCoordinateRegion(
             center: CLLocationCoordinate2D(latitude: 40.0500, longitude: 116.4200),
             span: MKCoordinateSpan(latitudeDelta: 1.85, longitudeDelta: 2.20)

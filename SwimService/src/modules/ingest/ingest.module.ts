@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { VenueDeduper } from './dedup/venue-deduper.service';
 import { AmapPoiProvider } from './providers/amap-poi.provider';
+import { GooglePlacesClient } from './providers/google-places.client';
 import { OsmOverpassProvider } from './providers/osm-overpass.provider';
 import { SwimmableClient } from './providers/swimmable.client';
 import { WaterQualityPrefetchService } from './water-quality-prefetch.service';
@@ -11,6 +12,7 @@ import { WaterQualityPrefetchService } from './water-quality-prefetch.service';
   providers: [
     VenueDeduper,
     AmapPoiProvider,
+    GooglePlacesClient,
     OsmOverpassProvider,
     SwimmableClient,
     WaterQualityPrefetchService,
@@ -18,6 +20,7 @@ import { WaterQualityPrefetchService } from './water-quality-prefetch.service';
   exports: [
     VenueDeduper,
     AmapPoiProvider,
+    GooglePlacesClient,
     OsmOverpassProvider,
     SwimmableClient,
     WaterQualityPrefetchService,

@@ -195,6 +195,8 @@ model Venue {
   follows         Follow[]
   followEvents    FollowEvent[]
   externalIds     VenueExternalId[]
+  googleVenueReviews GoogleVenueReview[]
+  venueReviewsRefresh VenueReviewsRefresh?
 
   @@index([cityId, status])
   @@index([cityId, dataSource])
@@ -325,6 +327,59 @@ model FollowEvent {
   @@index([venueId, createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])
   @@map("follow_events")
+}
+
+enum GoogleReviewFetchStatus {
+  fresh
+  missed
+  empty
+  error
+}
+
+model GoogleVenueReview {
+  id               String                @id @default(uuid()) @db.Uuid
+  venueId          String                @map("venue_id") @db.Uuid
+  venue            Venue                 @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  googlePlaceId    String                @map("google_place_id") @db.VarChar(255)
+  googleReviewId   String                @map("google_review_id") @db.VarChar(255)
+  authorName       String                @map("author_name") @db.VarChar(128)
+  authorAvatarUrl  String?               @map("author_avatar_url") @db.VarChar(1024)
+  rating           Int
+  text             String?               @db.VarChar(4000)
+  language         String?               @db.VarChar(16)
+  originalLanguage String?               @map("original_language") @db.VarChar(16)
+  relativeTime     String?               @map("relative_time") @db.VarChar(128)
+  reviewedAt       DateTime?             @map("reviewed_at") @db.Timestamptz(6)
+  fetchedAt        DateTime              @default(now()) @map("fetched_at") @db.Timestamptz(6)
+  expiresAt        DateTime              @map("expires_at") @db.Timestamptz(6)
+  status           GoogleReviewFetchStatus @default(fresh)
+  rawPayload       Json?                 @map("raw_payload")
+  createdAt        DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([venueId, googleReviewId])
+  @@index([venueId, expiresAt])
+  @@index([googlePlaceId])
+  @@map("google_venue_reviews")
+}
+
+model VenueReviewsRefresh {
+  id          String                  @id @default(uuid()) @db.Uuid
+  venueId     String                  @unique @map("venue_id") @db.Uuid
+  venue       Venue                   @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  placeId     String                  @map("place_id") @db.VarChar(255)
+  status      GoogleReviewFetchStatus @default(missed)
+  rating      Decimal?                @db.Decimal(3, 2)
+  totalReviews Int?                   @map("total_reviews")
+  lastFetchedAt DateTime?              @map("last_fetched_at") @db.Timestamptz(6)
+  nextFetchAt  DateTime                @default(now()) @map("next_fetch_at") @db.Timestamptz(6)
+  retryCount   Int                    @default(0) @map("retry_count")
+  lastError    String?                @map("last_error") @db.VarChar(1024)
+  createdAt    DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([nextFetchAt, status])
+  @@map("venue_reviews_refreshes")
 }
 
 model EmailVerificationCode {

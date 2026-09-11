@@ -65,6 +65,12 @@ struct TrainingView: View {
                 } else {
                     store.syncMapCurrentCityToUserLocation()
                 }
+                // 双保险：如果当前城市还没 venues（init Task race 没触发），显式拉一次
+                if store.cityVenues.isEmpty {
+                    Task {
+                        try? await store.loadVenues(for: store.currentCity)
+                    }
+                }
             }
             .onChange(of: store.userLocation) { _, newValue in
                 guard newValue != nil else { return }
@@ -80,8 +86,15 @@ struct TrainingView: View {
                     searchPresentation = nil
                 }
             }
-            .onChange(of: store.currentCity) { _, _ in
-                guard !submittedSearchText.isEmpty else { return }
+            .onChange(of: store.currentCity) { _, newCity in
+                guard !submittedSearchText.isEmpty else {
+                    if store.cityVenues.isEmpty {
+                        Task {
+                            try? await store.loadVenues(for: newCity)
+                        }
+                    }
+                    return
+                }
                 updateSearchResults(for: submittedSearchText)
             }
             .onChange(of: selectedVenueID) { _, newValue in
@@ -104,11 +117,14 @@ struct TrainingView: View {
             Map(position: $store.cameraPosition, selection: $selectedVenueID, scope: mapScope) {
                 UserAnnotation()
 
-                ForEach(store.cityVenues) { venue in
+                ForEach(store.cityVenues, id: \.id) { venue in
                     Marker(venue.displayName, systemImage: markerSymbol(for: venue), coordinate: venue.coordinate)
                         .tint(markerTint(for: venue))
                         .tag(venue.id)
                 }
+            }
+            .onMapCameraChange(frequency: .continuous) { context in
+                store.handleUserPanToCoordinate(context.region.center)
             }
             .mapStyle(mapStyle)
             .mapControlVisibility(.hidden)

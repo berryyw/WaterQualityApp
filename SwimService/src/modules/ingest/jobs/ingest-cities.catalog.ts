@@ -63,6 +63,7 @@ const CITY_NAME_HINTS: Array<{
   { nameMatch: /天津/, adcode: '120000', code: 'tianjin' },
   { nameMatch: /重庆/, adcode: '500000', code: 'chongqing' },
   { nameMatch: /洛杉矶|Los Angeles|LA/i, adcode: 'US-LA', code: 'la' },
+  { nameMatch: /尔湾|Irvine/i, adcode: 'US-IRVINE', code: 'irvine' },
 ];
 
 const OSM_CITY_BOUNDS: Record<string, OsmOverpassCityBounds> = {
@@ -72,11 +73,17 @@ const OSM_CITY_BOUNDS: Record<string, OsmOverpassCityBounds> = {
     north: 34.34,
     east: -118.15,
   },
+  irvine: {
+    south: 33.60,
+    west: -117.86,
+    north: 33.76,
+    east: -117.69,
+  },
 };
 
 export type IngestProviderKind = 'AMAP' | 'OSM_OVERPASS';
 
-const OSM_CITIES = new Set<string>(['la']);
+const OSM_CITIES = new Set<string>(['la', 'irvine']);
 
 export const IngestCities = {
   all(): Record<string, string> {

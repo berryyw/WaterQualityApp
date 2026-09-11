@@ -125,12 +125,14 @@ struct SupportedCity: RawRepresentable, Codable, Identifiable, Hashable {
     }
 
     static let losAngeles = SupportedCity(rawValue: "la", title: "洛杉矶", subtitle: "美国西海岸 · Los Angeles")
+    static let irvine = SupportedCity(rawValue: "irvine", title: "尔湾", subtitle: "美国加州 · Irvine, CA")
     static let beijing = SupportedCity(rawValue: "beijing", title: "北京", subtitle: "默认城市")
     static let shanghai = SupportedCity(rawValue: "shanghai", title: "上海", subtitle: "华东核心城市")
     static let shenzhen = SupportedCity(rawValue: "shenzhen", title: "深圳", subtitle: "华南核心城市")
     static let guangzhou = SupportedCity(rawValue: "gz", title: "广州", subtitle: "华南核心城市")
 
     static let allCases: [SupportedCity] = [
+        .irvine,
         .losAngeles,
         .beijing,
         .shanghai,
@@ -139,6 +141,7 @@ struct SupportedCity: RawRepresentable, Codable, Identifiable, Hashable {
 
     private static let defaultMetadata: [String: (title: String, subtitle: String)] = [
         losAngeles.rawValue: (losAngeles.title, losAngeles.subtitle),
+        irvine.rawValue: (irvine.title, irvine.subtitle),
         beijing.rawValue: (beijing.title, beijing.subtitle),
         shanghai.rawValue: (shanghai.title, shanghai.subtitle),
         shenzhen.rawValue: (shenzhen.title, shenzhen.subtitle),
@@ -186,13 +189,22 @@ struct VenueArtworkStyle: Codable, Hashable {
     var accentColorHex: String
 }
 
+enum VenueReviewSource: String, Codable, Hashable {
+    case app = "APP"
+    case google = "GOOGLE"
+}
+
 struct VenueReview: Identifiable, Codable, Hashable {
     var id: String
     var userName: String
     var userAvatarSymbol: String
     var userAvatarHex: String
+    var userAvatarURL: String? = nil
     var content: String
     var createdAt: Date
+    var rating: Int? = nil
+    var relativeTime: String? = nil
+    var source: VenueReviewSource = .app
 }
 
 struct WaterQualityMetric: Identifiable, Hashable {

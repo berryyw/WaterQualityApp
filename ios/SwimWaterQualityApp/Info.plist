@@ -43,16 +43,14 @@
 	<string>用于连接服务端 SwimService 服务，完成数据访问与功能联动。</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>用于展示你附近的游泳馆并辅助地图定位。</string>
-	<key>SWIM_SERVICE_BASE_URL</key>
-	<string>$(SWIM_SERVICE_BASE_URL)</string>
 	<key>SWIMMABLE_API_KEY</key>
 	<string>$(SWIMMABLE_API_KEY)</string>
+	<key>SWIM_SERVICE_BASE_URL</key>
+	<string>$(SWIM_SERVICE_BASE_URL)</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>
-	<key>UILaunchStoryboardName</key>
-	<string></string>
 	<key>UISupportedInterfaceOrientations~iphone</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

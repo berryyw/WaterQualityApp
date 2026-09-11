@@ -190,8 +190,16 @@ struct VenueDetailView: View {
 
     private var reviewCard: some View {
         VStack(alignment: .leading, spacing: AppSpacing.md) {
-            Text("用户评价")
-                .font(.headline)
+            HStack {
+                Text("用户评价")
+                    .font(.headline)
+                Spacer()
+                if !reviews.isEmpty {
+                    Text("\(reviews.count) 条")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             if reviews.isEmpty {
                 Text("还没有用户评价，欢迎成为第一个留下体验的人。")
@@ -199,31 +207,8 @@ struct VenueDetailView: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(reviews) { review in
-                    HStack(alignment: .top, spacing: AppSpacing.md) {
-                        Image(systemName: review.userAvatarSymbol)
-                            .font(.headline)
-                            .foregroundStyle(.white)
-                            .frame(width: 42, height: 42)
-                            .background(Color(hex: review.userAvatarHex))
-                            .clipShape(Circle())
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(review.userName)
-                                    .font(.subheadline.weight(.semibold))
-                                Spacer()
-                                Text(review.createdAt.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-
-                            Text(review.content)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    .padding(.vertical, 4)
+                    ReviewRowView(review: review)
+                        .padding(.vertical, 4)
                 }
             }
         }
@@ -453,5 +438,137 @@ struct VenueArtworkView: View {
                 .stroke(Color.white.opacity(0.14), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+    }
+}
+
+private struct ReviewRowView: View {
+    let review: VenueReview
+
+    var body: some View {
+        HStack(alignment: .top, spacing: AppSpacing.md) {
+            ReviewAvatarView(review: review)
+                .frame(width: 42, height: 42)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .center, spacing: 8) {
+                    Text(review.userName)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+
+                    ReviewSourceBadge(source: review.source)
+
+                    Spacer(minLength: 8)
+
+                    Text(timeLabel)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 2) {
+                    if let rating = review.rating, rating > 0 {
+                        StarRatingView(rating: rating, size: 12)
+                    }
+                    Spacer()
+                }
+
+                if !review.content.isEmpty {
+                    Text(review.content)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private var timeLabel: String {
+        if let rel = review.relativeTime, !rel.isEmpty {
+            return rel
+        }
+        return review.createdAt.formatted(date: .abbreviated, time: .shortened)
+    }
+}
+
+private struct ReviewAvatarView: View {
+    let review: VenueReview
+
+    var body: some View {
+        Group {
+            if let url = avatarURL {
+                AsyncImage(url: url, transaction: .init(animation: .easeIn(duration: 0.2))) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    case .failure:
+                        fallbackSymbol
+                    case .empty:
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .tint(.white)
+                    @unknown default:
+                        fallbackSymbol
+                    }
+                }
+            } else {
+                fallbackSymbol
+            }
+        }
+        .frame(width: 42, height: 42)
+        .background(Color(hex: review.userAvatarHex))
+        .clipShape(Circle())
+    }
+
+    private var fallbackSymbol: some View {
+        Image(systemName: review.userAvatarSymbol)
+            .font(.headline)
+            .foregroundStyle(.white)
+    }
+
+    private var avatarURL: URL? {
+        guard let raw = review.userAvatarURL, !raw.isEmpty else { return nil }
+        return URL(string: raw)
+    }
+}
+
+private struct StarRatingView: View {
+    let rating: Int
+    var size: CGFloat = 13
+    var filledTint: Color = Color(red: 0.98, green: 0.75, blue: 0.15)
+    var emptyTint: Color = Color(.tertiaryLabel)
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(1..<6, id: \.self) { i in
+                Image(systemName: i <= rating ? "star.fill" : "star")
+                    .font(.system(size: size, weight: .semibold))
+                    .foregroundStyle(i <= rating ? filledTint : emptyTint)
+            }
+        }
+        .accessibilityLabel("评分 \(rating) 星")
+    }
+}
+
+private struct ReviewSourceBadge: View {
+    let source: VenueReviewSource
+
+    var body: some View {
+        switch source {
+        case .google:
+            HStack(spacing: 4) {
+                Image(systemName: "mappin.and.ellipse")
+                    .font(.caption2.weight(.semibold))
+                Text("来自 Google Maps")
+                    .font(.caption2.weight(.semibold))
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Color(.tertiarySystemBackground).opacity(0.85))
+            .foregroundStyle(.secondary)
+            .clipShape(Capsule())
+        case .app:
+            EmptyView()
+        }
     }
 }
